@@ -54,6 +54,46 @@ check_dependencies() {
     fi
 }
 
+# Принудительная очистка всех старых процессов
+force_cleanup() {
+    echo -e "${YELLOW}🧹 Принудительная очистка старых процессов...${NC}"
+    
+    # Остановка всех процессов enhanced_bot.py
+    echo -e "${BLUE}🤖 Остановка всех экземпляров Telegram бота...${NC}"
+    pkill -f "enhanced_bot.py" 2>/dev/null && echo -e "${GREEN}✅ Старые боты остановлены${NC}" || echo -e "${YELLOW}⚠️ Боты не найдены${NC}"
+    
+    # Остановка всех процессов webapp_server.py
+    echo -e "${BLUE}🌐 Остановка всех экземпляров веб-приложения...${NC}"
+    pkill -f "webapp_server.py" 2>/dev/null && echo -e "${GREEN}✅ Старые веб-приложения остановлены${NC}" || echo -e "${YELLOW}⚠️ Веб-приложения не найдены${NC}"
+    
+    # Остановка всех процессов start_all.py
+    echo -e "${BLUE}🚀 Остановка всех лаунчеров...${NC}"
+    pkill -f "start_all.py" 2>/dev/null && echo -e "${GREEN}✅ Старые лаунчеры остановлены${NC}" || echo -e "${YELLOW}⚠️ Лаунчеры не найдены${NC}"
+    
+    # Остановка всех процессов bot.py (если есть старые версии)
+    echo -e "${BLUE}🤖 Остановка старых версий бота...${NC}"
+    pkill -f "bot.py" 2>/dev/null && echo -e "${GREEN}✅ Старые версии бота остановлены${NC}" || echo -e "${YELLOW}⚠️ Старые версии не найдены${NC}"
+    
+    # Очистка PID файлов
+    rm -f "$SCRIPT_DIR/vet_services.pid" 2>/dev/null
+    
+    # Ожидание завершения процессов
+    sleep 3
+    
+    # Проверка что все процессы действительно остановлены
+    REMAINING=$(ps aux | grep -E "(enhanced_bot|webapp_server|start_all|bot\.py)" | grep -v grep | wc -l)
+    if [ $REMAINING -gt 0 ]; then
+        echo -e "${RED}⚠️ Найдены оставшиеся процессы, принудительное завершение...${NC}"
+        pkill -9 -f "enhanced_bot.py" 2>/dev/null
+        pkill -9 -f "webapp_server.py" 2>/dev/null
+        pkill -9 -f "start_all.py" 2>/dev/null
+        pkill -9 -f "bot.py" 2>/dev/null
+        sleep 2
+    fi
+    
+    echo -e "${GREEN}✅ Принудительная очистка завершена${NC}"
+}
+
 # Запуск всех сервисов
 start_services() {
     print_header
@@ -61,6 +101,9 @@ start_services() {
     
     check_venv
     check_dependencies
+    
+    # ПРИНУДИТЕЛЬНАЯ ОЧИСТКА ПЕРЕД ЗАПУСКОМ
+    force_cleanup
     
     cd "$SCRIPT_DIR"
     source "$VENV_PATH/bin/activate"
@@ -70,13 +113,32 @@ start_services() {
     
     echo $! > vet_services.pid
     
-    sleep 3
+    sleep 5  # Увеличиваем время ожидания
     
     if ps -p $(cat vet_services.pid) > /dev/null 2>&1; then
         echo -e "${GREEN}✅ Сервисы запущены успешно!${NC}"
         echo -e "${BLUE}📱 Веб-приложение: http://localhost:5000${NC}"
         echo -e "${BLUE}🤖 Telegram бот: активен${NC}"
         echo -e "${YELLOW}📋 Логи: tail -f vet_services.log${NC}"
+        
+        # Проверка что процессы действительно запустились
+        sleep 3
+        BOT_RUNNING=$(pgrep -f "enhanced_bot.py" | wc -l)
+        WEBAPP_RUNNING=$(pgrep -f "webapp_server.py" | wc -l)
+        
+        echo -e "${BLUE}📊 Статус компонентов:${NC}"
+        if [ $BOT_RUNNING -gt 0 ]; then
+            echo -e "${GREEN}✅ Telegram бот: запущен ($BOT_RUNNING процесс)${NC}"
+        else
+            echo -e "${RED}❌ Telegram бот: не запущен${NC}"
+        fi
+        
+        if [ $WEBAPP_RUNNING -gt 0 ]; then
+            echo -e "${GREEN}✅ Веб-приложение: запущено ($WEBAPP_RUNNING процесс)${NC}"
+        else
+            echo -e "${RED}❌ Веб-приложение: не запущено${NC}"
+        fi
+        
     else
         echo -e "${RED}❌ Ошибка запуска сервисов${NC}"
         echo -e "${YELLOW}📋 Проверьте логи: cat vet_services.log${NC}"
@@ -87,31 +149,8 @@ start_services() {
 stop_services() {
     echo -e "${YELLOW}🛑 Остановка сервисов...${NC}"
     
-    if [ -f "$SCRIPT_DIR/vet_services.pid" ]; then
-        PID=$(cat "$SCRIPT_DIR/vet_services.pid")
-        if ps -p $PID > /dev/null 2>&1; then
-            kill $PID
-            sleep 2
-            
-            # Принудительная остановка если процесс все еще работает
-            if ps -p $PID > /dev/null 2>&1; then
-                kill -9 $PID
-                echo -e "${YELLOW}⚠️ Принудительная остановка${NC}"
-            fi
-            
-            echo -e "${GREEN}✅ Сервисы остановлены${NC}"
-        else
-            echo -e "${YELLOW}⚠️ Процесс уже не запущен${NC}"
-        fi
-        rm -f "$SCRIPT_DIR/vet_services.pid"
-    else
-        echo -e "${YELLOW}⚠️ PID файл не найден${NC}"
-    fi
-    
-    # Дополнительная очистка процессов
-    pkill -f "enhanced_bot.py" 2>/dev/null
-    pkill -f "webapp_server.py" 2>/dev/null
-    pkill -f "start_all.py" 2>/dev/null
+    # Используем принудительную очистку
+    force_cleanup
 }
 
 # Перезапуск сервисов
