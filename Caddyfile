@@ -1,0 +1,128 @@
+# Конфигурация Caddy для ветеринарного бота
+# Версия: 2.x
+
+# Веб-приложение для вызова врача
+app.murzik.pro {
+    # Проксирование на Flask веб-приложение
+    reverse_proxy localhost:5000
+    
+    # Логирование
+    log {
+        output file /var/log/caddy/app.murzik.pro.log
+        format json
+    }
+    
+    # Заголовки безопасности
+    header {
+        # Защита от XSS
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+        
+        # HTTPS принудительно
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        
+        # Удаляем заголовок сервера
+        -Server
+    }
+    
+    # Сжатие
+    encode gzip
+    
+    # Кэширование статических файлов
+    @static {
+        path *.css *.js *.png *.jpg *.jpeg *.gif *.ico *.svg *.woff *.woff2
+    }
+    header @static Cache-Control "public, max-age=31536000"
+}
+
+# Админ-панель на Streamlit
+admin.murzik.pro {
+    # Проксирование на Streamlit админ-панель
+    reverse_proxy localhost:8501
+    
+    # Логирование
+    log {
+        output file /var/log/caddy/admin.murzik.pro.log
+        format json
+    }
+    
+    # Заголовки безопасности (усиленные для админки)
+    header {
+        # Защита от XSS
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+        
+        # HTTPS принудительно
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        
+        # CSP для дополнительной безопасности
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:;"
+        
+        # Удаляем заголовок сервера
+        -Server
+    }
+    
+    # Сжатие
+    encode gzip
+    
+    # Специальные настройки для Streamlit WebSocket
+    @websocket {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    reverse_proxy @websocket localhost:8501 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote}
+    }
+    
+    # Базовая HTTP аутентификация (опционально)
+    # basicauth {
+    #     admin $2a$14$hashed_password_here
+    # }
+}
+
+# Основной домен (редирект или информационная страница)
+murzik.pro {
+    # Редирект на веб-приложение
+    redir https://app.murzik.pro{uri} permanent
+    
+    # Или можно показать информационную страницу:
+    # root * /var/www/murzik.pro
+    # file_server
+    
+    log {
+        output file /var/log/caddy/murzik.pro.log
+        format json
+    }
+}
+
+# Редирект с www
+www.murzik.pro {
+    redir https://app.murzik.pro{uri} permanent
+}
+
+# Глобальные настройки
+{
+    # Email для Let's Encrypt (замените на ваш)
+    email admin@murzik.pro
+    
+    # Автоматические HTTPS сертификаты
+    auto_https on
+    
+    # Логирование ошибок
+    log {
+        level INFO
+        output file /var/log/caddy/caddy.log
+        format json
+    }
+    
+    # Настройки сервера
+    servers {
+        protocol {
+            experimental_http3
+        }
+    }
+}
+
