@@ -261,11 +261,8 @@ class EnhancedVetBot:
         self.db.save_user(user.to_dict())
         
         keyboard = [
-            [InlineKeyboardButton("🩺 Консультация", callback_data='consultation')],
-            [InlineKeyboardButton("📱 Вызвать врача", web_app=WebAppInfo(url=WEBAPP_URL))],
-            [InlineKeyboardButton("📋 Мои заявки", callback_data='my_calls')],
-            [InlineKeyboardButton("📞 Контакты", callback_data='contact')],
-            [InlineKeyboardButton("ℹ️ Помощь", callback_data='help')]
+            [InlineKeyboardButton("🤖 AI Консультация", callback_data='consultation')],
+            [InlineKeyboardButton("📱 Вызвать врача", web_app=WebAppInfo(url=WEBAPP_URL))]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -276,10 +273,8 @@ class EnhancedVetBot:
 👨‍⚕️ Специализация: лечение кошек (стаж 15+ лет)
 
 Я помогу вам:
-• Получить консультацию по здоровью питомца
+• Получить AI-консультацию по здоровью питомца
 • Вызвать ветеринара на дом
-• Отследить статус ваших заявок
-• Найти контакты ветслужбы
 
 📱 Версия бота: {VERSION} (сборка {BUILD_DATE})
 
@@ -402,12 +397,6 @@ class EnhancedVetBot:
         
         if query.data == 'consultation':
             await self.start_consultation(query)
-        elif query.data == 'help':
-            await self.show_help(query)
-        elif query.data == 'my_calls':
-            await self.show_my_calls(query)
-        elif query.data == 'contact':
-            await self.show_contact(query)
         elif query.data == 'emergency_contact':
             await self.show_emergency_contact(query)
     
