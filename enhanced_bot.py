@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Улучшенный ветеринарный бот с веб-приложением для вызова врача
+Улучшенный ветеринарный бот с веб-приложением для вызова врача и админ-панелью
 """
 
 import os
@@ -91,9 +90,102 @@ class VetBotDatabase:
                 question TEXT,
                 response TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                admin_response TEXT,
+                admin_username TEXT,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
             )
         ''')
+        
+        # Таблица для админских сессий
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                admin_username TEXT NOT NULL,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ended_at TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1
+            )
+        ''')
+        
+        # Таблица для сообщений админов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                admin_username TEXT NOT NULL,
+                message TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                telegram_message_id INTEGER
+            )
+        ''')
+        
+        # Таблица для очереди сообщений от админов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_message_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent BOOLEAN DEFAULT 0
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def is_admin_session_active(self, user_id):
+        """Проверить, активна ли админская сессия"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT admin_username FROM admin_sessions 
+            WHERE user_id = ? AND is_active = 1
+        ''', (user_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    
+    def get_pending_admin_messages(self, user_id):
+        """Получить неотправленные сообщения от админов"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, message FROM admin_message_queue 
+            WHERE user_id = ? AND sent = 0
+            ORDER BY created_at ASC
+        ''', (user_id,))
+        
+        messages = cursor.fetchall()
+        conn.close()
+        return messages
+    
+    def mark_admin_message_sent(self, message_id):
+        """Отметить сообщение как отправленное"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE admin_message_queue 
+            SET sent = 1 
+            WHERE id = ?
+        ''', (message_id,))
+        
+        conn.commit()
+        conn.close()
+    
+    def add_admin_message_to_queue(self, user_id, message):
+        """Добавить сообщение админа в очередь"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO admin_message_queue (user_id, message)
+            VALUES (?, ?)
+        ''', (user_id, message))
         
         conn.commit()
         conn.close()
@@ -106,7 +198,7 @@ class VetBotDatabase:
         cursor.execute('''
             INSERT OR REPLACE INTO users (user_id, username, first_name, last_name)
             VALUES (?, ?, ?, ?)
-        ''', (user_data['id'], user_data.get('username'), 
+        ''', (user_data['user_id'], user_data.get('username'), 
               user_data.get('first_name'), user_data.get('last_name')))
         
         conn.commit()
@@ -122,25 +214,13 @@ class VetBotDatabase:
             (user_id, name, phone, address, pet_type, pet_name, pet_age, 
              problem, urgency, preferred_time, comments)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            call_data.get('user_id'),
-            call_data.get('name'),
-            call_data.get('phone'),
-            call_data.get('address'),
-            call_data.get('petType'),
-            call_data.get('petName'),
-            call_data.get('petAge'),
-            call_data.get('problem'),
-            call_data.get('urgency', 'normal'),
-            call_data.get('preferredTime'),
-            call_data.get('comments')
-        ))
+        ''', (call_data['user_id'], call_data['name'], call_data['phone'],
+              call_data['address'], call_data['pet_type'], call_data['pet_name'],
+              call_data['pet_age'], call_data['problem'], call_data['urgency'],
+              call_data['preferred_time'], call_data['comments']))
         
-        call_id = cursor.lastrowid
         conn.commit()
         conn.close()
-        
-        return call_id
     
     def get_user_calls(self, user_id):
         """Получение заявок пользователя"""
@@ -155,8 +235,20 @@ class VetBotDatabase:
         
         calls = cursor.fetchall()
         conn.close()
-        
         return calls
+    
+    def save_consultation(self, user_id, question, response):
+        """Сохранение консультации в базу данных"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO consultations (user_id, question, response)
+            VALUES (?, ?, ?)
+        ''', (user_id, question, response))
+        
+        conn.commit()
+        conn.close()
 
 class EnhancedVetBot:
     def __init__(self):
@@ -164,31 +256,44 @@ class EnhancedVetBot:
         self.db = VetBotDatabase()
         self.setup_handlers()
     
-    async def get_ai_consultation(self, user_message, user_name=""):
+    def setup_handlers(self):
+        """Настройка обработчиков"""
+        # Команды
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("version", self.version_command))
+        
+        # Обработчики кнопок
+        self.application.add_handler(CallbackQueryHandler(self.button_handler))
+        
+        # Обработчик веб-приложения
+        self.application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.web_app_data))
+        
+        # Обработчик текстовых сообщений
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+    
+    async def get_ai_consultation(self, user_message, user_name):
         """Получение AI-консультации от DeepSeek"""
         try:
+            system_prompt = """Ты опытный ветеринар-фелинолог с 15+ летним стажем, специализирующийся исключительно на лечении кошек.
+
+Важные правила ответа:
+- НЕ используй символы ### в ответах
+- НЕ используй форматирование **текст**
+- Используй простой текст с эмодзи
+- Структурируй ответ с помощью номеров и эмодзи
+
+Дай профессиональную консультацию по здоровью кошки, включая:
+1. Анализ симптомов
+2. Возможные причины
+3. Рекомендации по первой помощи
+4. Когда обязательно нужен осмотр врача
+
+Помни: ты консультируешь только по кошкам!"""
+            
             headers = {
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json"
+                'Authorization': f'Bearer {DEEPSEEK_API_KEY}',
+                'Content-Type': 'application/json'
             }
-            
-            system_prompt = """Ты - опытный ветеринар-фелинолог с 15+ летним стажем. 
-            Специализируешься исключительно на лечении кошек.
-            
-            Твоя задача:
-            1. Проанализировать симптомы и дать профессиональную консультацию
-            2. Предложить первичные рекомендации по уходу
-            3. Определить степень срочности ситуации
-            4. При необходимости рекомендовать очный осмотр
-            
-            ВАЖНО: 
-            - НЕ используй символы ### в ответах
-            - НЕ используй форматирование **текст** 
-            - Используй простой текст с эмодзи
-            - Структурируй ответ с помощью номеров и эмодзи
-            - Отвечай на русском языке
-            - Всегда подчеркивай, что онлайн-консультация не заменяет очного осмотра
-            - Будь внимательным, профессиональным и сочувствующим"""
             
             data = {
                 "model": "deepseek-chat",
@@ -196,15 +301,20 @@ class EnhancedVetBot:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Пользователь {user_name} спрашивает: {user_message}"}
                 ],
-                "max_tokens": 1000,
+                "max_tokens": 1500,
                 "temperature": 0.7
             }
             
-            # Асинхронный запрос к API
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=20)  # Уменьшен таймаут
+            # Асинхронный запрос с таймаутом
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    requests.post, 
+                    DEEPSEEK_API_URL, 
+                    headers=headers, 
+                    json=data, 
+                    timeout=20
+                ),
+                timeout=25.0
             )
             
             if response.status_code == 200:
@@ -212,16 +322,15 @@ class EnhancedVetBot:
                 ai_response = result['choices'][0]['message']['content']
                 
                 # Очистка форматирования
-                ai_response = ai_response.replace('###', '')  # Убираем ###
-                ai_response = ai_response.replace('**', '')   # Убираем **
+                ai_response = ai_response.replace('###', '').replace('**', '')
                 
-                # Добавляем информацию о боте в конец ответа
+                # Добавляем информацию о версии
                 ai_response += f"\n\n🤖 Консультация предоставлена ветеринарным ботом v{VERSION}"
-                ai_response += f"\n⚠️ Для точного диагноза рекомендуется очный осмотр"
+                ai_response += "\n⚠️ Для точного диагноза рекомендуется очный осмотр"
                 
                 return ai_response
             else:
-                logger.error(f"DeepSeek API error: {response.status_code} - {response.text}")
+                logger.error(f"DeepSeek API error: {response.status_code}")
                 return self.get_fallback_response()
                 
         except Exception as e:
@@ -230,43 +339,37 @@ class EnhancedVetBot:
     
     def get_fallback_response(self):
         """Резервный ответ при недоступности AI"""
-        return """
-🩺 Извините, AI-консультант временно недоступен.
+        return f"""🐱 Извините, AI-консультант временно недоступен.
 
-📋 Общие рекомендации:
-• При острых симптомах - срочно к врачу
-• Обеспечьте покой животному
-• Следите за температурой и аппетитом
-• Не давайте человеческие лекарства
+📞 Для получения консультации обратитесь к ветеринару:
+Телефон: {VET_SERVICE_PHONE}
 
-📞 Для экстренной помощи звоните: """ + VET_SERVICE_PHONE + """
+🚨 При экстренных ситуациях звоните немедленно!
 
-🤖 Попробуйте задать вопрос позже, когда AI-консультант будет доступен.
-        """
-    
-    def setup_handlers(self):
-        """Настройка обработчиков команд и сообщений"""
-        # Команды
-        self.application.add_handler(CommandHandler("start", self.start))
-        self.application.add_handler(CommandHandler("help", self.help_command))
-        self.application.add_handler(CommandHandler("webapp", self.webapp_command))
-        self.application.add_handler(CommandHandler("my_calls", self.my_calls_command))
-        self.application.add_handler(CommandHandler("contact", self.contact_command))
-        self.application.add_handler(CommandHandler("version", self.version_command))
-        
-        # Обработчики callback'ов
-        self.application.add_handler(CallbackQueryHandler(self.button_handler))
-        
-        # Обработчик текстовых сообщений
-        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
-        
-        # Обработчик данных из веб-приложения
-        self.application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.web_app_data))
+🤖 Консультация предоставлена ветеринарным ботом v{VERSION}"""
     
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /start"""
         user = update.effective_user
-        self.db.save_user(user.to_dict())
+        
+        # Сохраняем данные пользователя
+        user_data = {
+            'user_id': user.id,
+            'username': user.username,
+            'first_name': user.first_name,
+            'last_name': user.last_name
+        }
+        self.db.save_user(user_data)
+        
+        welcome_text = f"""🐱 Добро пожаловать в ветеринарную службу!
+
+Я помогу вам:
+• Получить AI-консультацию по здоровью кошки
+• Вызвать ветеринара на дом
+
+📱 Версия бота: {VERSION}
+
+Выберите нужную опцию:"""
         
         keyboard = [
             [InlineKeyboardButton("🤖 AI Консультация", callback_data='consultation')],
@@ -274,165 +377,31 @@ class EnhancedVetBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        welcome_text = f"""
-🐾 Добро пожаловать, {user.first_name}!
-
-🩺 Профессиональный ветеринарный консультант-фелинолог
-👨‍⚕️ Специализация: лечение кошек (стаж 15+ лет)
-
-Я помогу вам:
-• Получить AI-консультацию по здоровью питомца
-• Вызвать ветеринара на дом
-
-📱 Версия бота: {VERSION}
-
-Выберите нужную опцию:
-        """
-        
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
     
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик команды /help"""
-        help_text = f"""
-🆘 Помощь по использованию бота:
-
-🩺 Профессиональный ветеринарный консультант-фелинолог
-👨‍⚕️ Специализация: лечение кошек (стаж 15+ лет)
-📱 Версия: {VERSION}
-
-📋 Команды:
-/start - Главное меню
-/help - Эта справка
-/webapp - Открыть веб-приложение
-/my_calls - Мои заявки на вызов врача
-/contact - Контактная информация
-/version - Показать версию бота
-
-🩺 Функции:
-• Консультация - получить совет по здоровью питомца
-• Вызвать врача - заказать выезд ветеринара на дом
-• Отслеживание заявок - проверить статус вызова
-
-⚠️ Важно:
-В экстренных случаях звоните напрямую: {VET_SERVICE_PHONE}
-        """
-        await update.message.reply_text(help_text)
-    
-    async def webapp_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для открытия веб-приложения"""
-        keyboard = [[InlineKeyboardButton("📱 Открыть веб-приложение", web_app=WebAppInfo(url=WEBAPP_URL))]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "Нажмите кнопку ниже, чтобы открыть веб-приложение для вызова врача:",
-            reply_markup=reply_markup
-        )
-    
-    async def my_calls_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для просмотра заявок пользователя"""
-        user_id = update.effective_user.id
-        calls = self.db.get_user_calls(user_id)
-        
-        if not calls:
-            await update.message.reply_text("У вас пока нет заявок на вызов врача.")
-            return
-        
-        response = "📋 Ваши заявки на вызов врача:\n\n"
-        
-        for call in calls[:5]:  # Показываем последние 5 заявок
-            call_id, user_id, name, phone, address, pet_type, pet_name, pet_age, problem, urgency, preferred_time, comments, status, created_at = call
-            
-            status_emoji = {
-                'pending': '⏳',
-                'confirmed': '✅',
-                'in_progress': '🚗',
-                'completed': '✅',
-                'cancelled': '❌'
-            }.get(status, '❓')
-            
-            response += f"{status_emoji} Заявка #{call_id}\n"
-            response += f"📅 {created_at}\n"
-            response += f"🐾 {pet_type} {pet_name or ''}\n"
-            response += f"📍 {address[:50]}...\n"
-            response += f"📊 Статус: {status}\n\n"
-        
-        await update.message.reply_text(response)
-    
-    async def contact_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для показа контактов"""
-        contact_text = f"""
-📞 Контактная информация:
-
-🏥 Ветеринарная служба
-📱 Телефон: {VET_SERVICE_PHONE}
-📧 Email: {os.getenv('VET_SERVICE_EMAIL', 'info@vetservice.com')}
-
-🕐 Режим работы:
-• Консультации: 8:00-22:00
-• Экстренные вызовы: круглосуточно
-• Плановые вызовы: 9:00-20:00
-
-💰 Стоимость услуг:
-• Консультация в боте: бесплатно
-• Выезд врача: от 1500 руб.
-• Экстренный вызов: от 3000 руб.
-        """
-        
-        await update.message.reply_text(contact_text)
-    
     async def version_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для показа версии бота"""
-        version_text = f"""
-📱 Информация о версии:
+        """Команда для показа версии"""
+        version_text = f"""🤖 Ветеринарный бот
 
-🤖 Ветеринарный бот-фелинолог
-📊 Версия: {VERSION}
-👨‍⚕️ Специализация: лечение кошек (стаж 15+ лет)
-
-🔧 Возможности:
-• Профессиональные консультации
-• Веб-приложение для вызова врача
-• База данных заявок
-• Отслеживание статуса вызовов
-        """
+📱 Версия: {VERSION}
+🔧 Функции: AI-консультации, вызов врача
+🐱 Специализация: кошки"""
+        
         await update.message.reply_text(version_text)
     
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработчик нажатий на inline кнопки"""
+        """Обработчик нажатий на кнопки"""
         query = update.callback_query
         await query.answer()
         
         if query.data == 'consultation':
             await self.start_consultation(query)
         elif query.data == 'emergency_contact':
-            await self.show_emergency_contact(query)
-    
-    async def show_emergency_contact(self, query):
-        """Показать экстренные контакты"""
-        emergency_text = f"""
-🚨 ЭКСТРЕННАЯ ВЕТЕРИНАРНАЯ ПОМОЩЬ
-
-📞 Круглосуточная служба: {VET_SERVICE_PHONE}
-
-⚠️ Звоните немедленно при:
-• Потере сознания животного
-• Сильном кровотечении
-• Затрудненном дыхании
-• Судорогах
-• Отравлении
-• Травмах
-
-🚗 Выезд экстренной бригады: 24/7
-💰 Стоимость экстренного вызова: от 3000 руб.
-
-Не теряйте время - звоните прямо сейчас!
-        """
-        await query.edit_message_text(emergency_text)
+            await self.emergency_contact(query)
     
     async def start_consultation(self, query):
         """Начать консультацию"""
-        consultation_text = """
-🩺 AI-Ветеринарная консультация
+        consultation_text = """🩺 AI-Ветеринарная консультация
 
 🤖 Наш AI-ветеринар с 15+ летним опытом готов помочь!
 
@@ -446,80 +415,44 @@ class EnhancedVetBot:
 
 Просто напишите ваш вопрос в следующем сообщении, и AI-ветеринар проанализирует ситуацию.
 
-⚠️ Помните: AI-консультация не заменяет очного осмотра врача!
-        """
+⚠️ Помните: AI-консультация не заменяет очного осмотра врача!"""
         
-        keyboard = [[InlineKeyboardButton("📱 Вызвать врача на дом", web_app=WebAppInfo(url=WEBAPP_URL))]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(consultation_text, reply_markup=reply_markup)
+        await query.edit_message_text(consultation_text)
     
-    async def show_help(self, query):
-        """Показать помощь"""
-        help_text = """
-🆘 Помощь по использованию бота:
+    async def emergency_contact(self, query):
+        """Экстренные контакты"""
+        emergency_text = f"""🚨 Экстренные контакты
 
-🔹 Консультация - получите первичную консультацию по здоровью питомца
-🔹 Вызвать врача - закажите выезд ветеринара на дом через удобную форму
-🔹 Мои заявки - отслеживайте статус ваших вызовов
-🔹 Контакты - получите контактную информацию службы
+📞 Телефон службы: {VET_SERVICE_PHONE}
 
-⚠️ В экстренных случаях звоните напрямую!
+⚠️ При критических состояниях:
+• Отравление
+• Травмы
+• Затрудненное дыхание
+• Потеря сознания
 
-Бот работает 24/7 для вашего удобства.
-        """
-        await query.edit_message_text(help_text)
-    
-    async def show_my_calls(self, query):
-        """Показать заявки пользователя"""
-        user_id = query.from_user.id
-        calls = self.db.get_user_calls(user_id)
+Звоните НЕМЕДЛЕННО!"""
         
-        if not calls:
-            await query.edit_message_text("У вас пока нет заявок на вызов врача.")
-            return
-        
-        response = "📋 Ваши заявки:\n\n"
-        
-        for call in calls[:3]:  # Показываем последние 3 заявки
-            call_id, user_id, name, phone, address, pet_type, pet_name, pet_age, problem, urgency, preferred_time, comments, status, created_at = call
-            
-            status_emoji = {
-                'pending': '⏳ Ожидает',
-                'confirmed': '✅ Подтверждена',
-                'in_progress': '🚗 Врач в пути',
-                'completed': '✅ Завершена',
-                'cancelled': '❌ Отменена'
-            }.get(status, '❓ Неизвестно')
-            
-            response += f"#{call_id} - {status_emoji}\n"
-            response += f"🐾 {pet_type}\n"
-            response += f"📅 {created_at[:16]}\n\n"
-        
-        await query.edit_message_text(response)
-    
-    async def show_contact(self, query):
-        """Показать контакты"""
-        contact_text = f"""
-📞 Контакты ветслужбы:
-
-📱 {VET_SERVICE_PHONE}
-📧 {os.getenv('VET_SERVICE_EMAIL', 'info@vetservice.com')}
-
-🕐 Режим работы:
-Консультации: 8:00-22:00
-Вызовы: круглосуточно
-        """
-        await query.edit_message_text(contact_text)
+        await query.edit_message_text(emergency_text)
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик текстовых сообщений с AI-консультацией"""
+        user_id = update.effective_user.id
         user_message = update.message.text
         user_name = update.effective_user.first_name or "Пользователь"
         
+        # Сначала проверяем и отправляем сообщения от админов
+        await self.check_and_send_admin_messages(update, context)
+        
+        # Проверяем, активна ли админская сессия
+        active_admin = self.db.is_admin_session_active(user_id)
+        
         # Отправляем сообщение о том, что обрабатываем запрос
         try:
-            processing_msg = await update.message.reply_text("🤔 Анализирую ваш вопрос, подождите немного...")
+            if active_admin:
+                processing_msg = await update.message.reply_text(f"👨‍⚕️ Ветеринар {active_admin} анализирует ваш вопрос...")
+            else:
+                processing_msg = await update.message.reply_text("🤔 Анализирую ваш вопрос, подождите немного...")
         except Exception as e:
             logger.error(f"Error sending processing message: {e}")
             return
@@ -531,8 +464,12 @@ class EnhancedVetBot:
                 timeout=45.0  # 45 секунд таймаут
             )
             
+            # Если активна админская сессия, добавляем уведомление
+            if active_admin:
+                ai_response += f"\n\n👨‍⚕️ К диалогу подключен ветеринар {active_admin}. Вы можете получить дополнительную персональную консультацию!"
+            
             # Сохраняем консультацию в базу данных
-            self.save_consultation(update.effective_user.id, user_message, ai_response)
+            self.db.save_consultation(user_id, user_message, ai_response)
             
             # Удаляем сообщение о обработке
             try:
@@ -578,121 +515,81 @@ class EnhancedVetBot:
             except:
                 pass
     
-    def save_consultation(self, user_id, question, response):
-        """Сохранение консультации в базу данных"""
-        try:
-            conn = sqlite3.connect(self.db.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                INSERT INTO consultations (user_id, question, response)
-                VALUES (?, ?, ?)
-            ''', (user_id, question, response))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Error saving consultation: {e}")
+    async def check_and_send_admin_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Проверить и отправить сообщения от админов"""
+        user_id = update.effective_user.id
+        pending_messages = self.db.get_pending_admin_messages(user_id)
+        
+        for message_id, message in pending_messages:
+            try:
+                await update.message.reply_text(f"👨‍⚕️ Сообщение от ветеринара:\n\n{message}")
+                self.db.mark_admin_message_sent(message_id)
+            except Exception as e:
+                logger.error(f"Error sending admin message: {e}")
     
     async def web_app_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик данных из веб-приложения"""
-        data = update.effective_message.web_app_data.data
-        user = update.effective_user
-        
         try:
-            call_data = json.loads(data)
-            call_data['user_id'] = user.id
+            data = json.loads(update.effective_message.web_app_data.data)
             
-            # Сохранение заявки в базу данных
-            call_id = self.db.save_vet_call(call_data)
+            # Добавляем user_id к данным
+            data['user_id'] = update.effective_user.id
             
-            # Определение срочности
-            urgency_text = {
-                'normal': 'Обычная',
-                'urgent': 'Срочная', 
-                'emergency': 'Экстренная'
-            }.get(call_data.get('urgency', 'normal'), 'Обычная')
+            # Сохраняем заявку в базу данных
+            self.db.save_vet_call(data)
             
-            # Ответ пользователю
-            response = f"""
-✅ Заявка #{call_id} принята!
+            # Отправляем подтверждение пользователю
+            confirmation_text = f"""✅ Заявка на вызов врача принята!
 
-📋 Детали заявки:
-• Имя: {call_data.get('name', 'Не указано')}
-• Телефон: {call_data.get('phone', 'Не указан')}
-• Адрес: {call_data.get('address', 'Не указан')}
-• Питомец: {call_data.get('petType', 'Не указан')} {call_data.get('petName', '')}
-• Возраст: {call_data.get('petAge', 'Не указан')}
-• Проблема: {call_data.get('problem', 'Не указана')}
-• Срочность: {urgency_text}
+👤 Имя: {data.get('name', 'Не указано')}
+📞 Телефон: {data.get('phone', 'Не указан')}
+📍 Адрес: {data.get('address', 'Не указан')}
+🐱 Питомец: {data.get('pet_name', 'Не указано')} ({data.get('pet_type', 'кошка')})
+⏰ Желаемое время: {data.get('preferred_time', 'Не указано')}
 
-🕐 Ожидаемое время прибытия: 
-{self.get_arrival_time(call_data.get('urgency', 'normal'))}
+📋 Проблема: {data.get('problem', 'Не указана')}
 
-📞 С вами свяжется врач для уточнения деталей в течение 15 минут.
-            """
+🔔 Мы свяжемся с вами в ближайшее время для подтверждения визита.
+
+📞 Контактный телефон: {VET_SERVICE_PHONE}"""
             
-            await update.effective_message.reply_text(response)
+            await update.effective_message.reply_text(confirmation_text)
             
-            # Уведомление администратора
+            # Уведомляем администратора (если настроен)
             if ADMIN_CHAT_ID:
-                admin_message = f"""
-🚨 НОВАЯ ЗАЯВКА #{call_id}
+                admin_text = f"""🆕 Новая заявка на вызов врача!
 
-👤 Пользователь: {user.first_name} {user.last_name or ''} (@{user.username or 'нет'})
-📱 Телефон: {call_data.get('phone')}
-📍 Адрес: {call_data.get('address')}
-🐾 Питомец: {call_data.get('petType')} {call_data.get('petName', '')} ({call_data.get('petAge', 'возраст не указан')})
-🚨 Срочность: {urgency_text}
-📝 Проблема: {call_data.get('problem')}
-⏰ Предпочтительное время: {call_data.get('preferredTime', 'Не указано')}
-💬 Комментарии: {call_data.get('comments', 'Нет')}
-                """
+👤 От: {update.effective_user.first_name} (@{update.effective_user.username})
+📞 Телефон: {data.get('phone')}
+📍 Адрес: {data.get('address')}
+🐱 Питомец: {data.get('pet_name')} ({data.get('pet_age')})
+🚨 Срочность: {data.get('urgency')}
+⏰ Время: {data.get('preferred_time')}
+
+📋 Проблема: {data.get('problem')}
+💬 Комментарии: {data.get('comments', 'Нет')}"""
                 
                 try:
-                    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_message)
+                    await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=admin_text)
                 except Exception as e:
-                    logger.error(f"Ошибка отправки уведомления админу: {e}")
-            
-            # Логирование
-            logger.info(f"Получена заявка #{call_id} от пользователя {user.id}: {call_data}")
-            
-        except json.JSONDecodeError:
-            await update.effective_message.reply_text(
-                "❌ Ошибка обработки данных. Попробуйте еще раз."
-            )
+                    logger.error(f"Error sending admin notification: {e}")
+                    
         except Exception as e:
-            logger.error(f"Ошибка обработки заявки: {e}")
+            logger.error(f"Error processing web app data: {e}")
             await update.effective_message.reply_text(
-                "❌ Произошла ошибка при обработке заявки. Попробуйте еще раз или свяжитесь с нами по телефону."
+                "❌ Произошла ошибка при обработке заявки. Попробуйте еще раз или свяжитесь с нами напрямую."
             )
-    
-    def get_arrival_time(self, urgency):
-        """Получение времени прибытия в зависимости от срочности"""
-        times = {
-            'emergency': '30-60 минут',
-            'urgent': '1-2 часа',
-            'normal': '2-4 часа'
-        }
-        return times.get(urgency, '2-4 часа')
     
     def run(self):
         """Запуск бота"""
         print(f"""
-╔══════════════════════════════════════════════════════════════╗
-║                  ВЕТЕРИНАРНЫЙ БОТ-ФЕЛИНОЛОГ                 ║
-╠══════════════════════════════════════════════════════════════╣
-║ 📊 Версия: {VERSION:<47} ║
-║ 👨‍⚕️ Специализация: лечение кошек (стаж 15+ лет)           ║
-║ 🔧 Возможности: консультации, веб-приложение, база данных   ║
-╚══════════════════════════════════════════════════════════════╝
+🤖 Ветеринарный бот v{VERSION} запускается...
+🔧 Функции: AI-консультации, вызов врача, админ-панель
+🐱 Специализация: кошки
+📱 WebApp URL: {WEBAPP_URL}
         """)
-        logger.info(f"Запуск профессионального ветеринарного бота-фелинолога v{VERSION}")
-        logger.info("Бот готов к работе!")
         
-        # Простой запуск бота
-        self.application.run_polling()
+        self.application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     bot = EnhancedVetBot()
