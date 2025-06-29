@@ -204,7 +204,7 @@ class EnhancedVetBot:
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None, 
-                lambda: requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=30)
+                lambda: requests.post(DEEPSEEK_API_URL, headers=headers, json=data, timeout=20)  # Уменьшен таймаут
             )
             
             if response.status_code == 200:
@@ -518,17 +518,27 @@ class EnhancedVetBot:
         user_name = update.effective_user.first_name or "Пользователь"
         
         # Отправляем сообщение о том, что обрабатываем запрос
-        processing_msg = await update.message.reply_text("🤔 Анализирую ваш вопрос, подождите немного...")
+        try:
+            processing_msg = await update.message.reply_text("🤔 Анализирую ваш вопрос, подождите немного...")
+        except Exception as e:
+            logger.error(f"Error sending processing message: {e}")
+            return
         
         try:
-            # Получаем AI-консультацию
-            ai_response = await self.get_ai_consultation(user_message, user_name)
+            # Получаем AI-консультацию с таймаутом
+            ai_response = await asyncio.wait_for(
+                self.get_ai_consultation(user_message, user_name),
+                timeout=45.0  # 45 секунд таймаут
+            )
             
             # Сохраняем консультацию в базу данных
             self.save_consultation(update.effective_user.id, user_message, ai_response)
             
             # Удаляем сообщение о обработке
-            await processing_msg.delete()
+            try:
+                await processing_msg.delete()
+            except:
+                pass  # Игнорируем ошибки удаления
             
             # Отправляем ответ с кнопками
             keyboard = [
@@ -537,11 +547,36 @@ class EnhancedVetBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update.message.reply_text(ai_response, reply_markup=reply_markup)
+            # Разбиваем длинные сообщения
+            if len(ai_response) > 4000:
+                # Отправляем по частям
+                parts = [ai_response[i:i+4000] for i in range(0, len(ai_response), 4000)]
+                for i, part in enumerate(parts):
+                    if i == len(parts) - 1:  # Последняя часть с кнопками
+                        await update.message.reply_text(part, reply_markup=reply_markup)
+                    else:
+                        await update.message.reply_text(part)
+            else:
+                await update.message.reply_text(ai_response, reply_markup=reply_markup)
             
+        except asyncio.TimeoutError:
+            logger.error("AI consultation timeout")
+            try:
+                await processing_msg.edit_text(
+                    "⏰ Извините, AI-консультант не отвечает. Попробуйте позже или обратитесь к врачу напрямую.\n\n"
+                    f"📞 Телефон: {VET_SERVICE_PHONE}"
+                )
+            except:
+                pass
         except Exception as e:
             logger.error(f"Error in handle_message: {e}")
-            await processing_msg.edit_text("❌ Произошла ошибка при обработке запроса. Попробуйте позже.")
+            try:
+                await processing_msg.edit_text(
+                    "❌ Произошла ошибка при обработке запроса. Попробуйте позже или обратитесь к врачу напрямую.\n\n"
+                    f"📞 Телефон: {VET_SERVICE_PHONE}"
+                )
+            except:
+                pass
     
     def save_consultation(self, user_id, question, response):
         """Сохранение консультации в базу данных"""
