@@ -3,108 +3,311 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вызов ветеринара</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="styles.css">
+    <title>Ветеринарная служба - Вызов врача на дом</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            max-width: 500px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: #cccccc;
+            font-size: 1.1em;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #ffffff;
+            font-size: 1.1em;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 15px 20px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+            font-size: 1em;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #4CAF50;
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 20px rgba(76, 175, 80, 0.3);
+        }
+
+        .form-group input::placeholder {
+            color: #aaaaaa;
+        }
+
+        .submit-btn {
+            width: 100%;
+            padding: 20px;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+            border: none;
+            border-radius: 15px;
+            font-size: 1.3em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 20px;
+            box-shadow: 0 10px 30px rgba(76, 175, 80, 0.3);
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 40px rgba(76, 175, 80, 0.4);
+            background: linear-gradient(45deg, #45a049, #4CAF50);
+        }
+
+        .submit-btn:active {
+            transform: translateY(-1px);
+        }
+
+        .success-message {
+            display: none;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            margin-top: 20px;
+            font-weight: bold;
+            animation: slideIn 0.5s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .error-message {
+            display: none;
+            background: linear-gradient(45deg, #f44336, #d32f2f);
+            color: white;
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 30px 20px;
+                margin: 10px;
+            }
+            
+            .header h1 {
+                font-size: 2em;
+            }
+            
+            .submit-btn {
+                padding: 18px;
+                font-size: 1.2em;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <header class="header">
-            <div class="header-icon">🩺</div>
-            <h1>Вызов ветеринара</h1>
-            <p class="subtitle">Заполните форму для вызова врача на дом</p>
-        </header>
+        <div class="header">
+            <h1>🏥 Ветеринарная служба</h1>
+            <p>Вызов врача на дом</p>
+        </div>
 
-        <form id="callForm" class="form">
+        <form id="vetForm">
             <div class="form-group">
-                <label for="name">Ваше имя *</label>
-                <input type="text" id="name" name="name" required placeholder="Введите ваше имя">
-            </div>
-
-            <div class="form-group">
-                <label for="phone">Телефон *</label>
-                <input type="tel" id="phone" name="phone" required placeholder="+7 (999) 123-45-67">
+                <label for="name">👤 Имя *</label>
+                <input type="text" id="name" name="name" placeholder="Введите ваше имя" required>
             </div>
 
             <div class="form-group">
-                <label for="address">Адрес *</label>
-                <textarea id="address" name="address" required placeholder="Укажите полный адрес для выезда врача"></textarea>
+                <label for="phone">📞 Телефон *</label>
+                <input type="tel" id="phone" name="phone" placeholder="+7 (___) ___-__-__" required>
             </div>
 
             <div class="form-group">
-                <label for="petType">Тип питомца *</label>
-                <select id="petType" name="petType" required>
-                    <option value="">Выберите тип питомца</option>
-                    <option value="cat">Кошка</option>
-                    <option value="dog">Собака</option>
-                    <option value="bird">Птица</option>
-                    <option value="rabbit">Кролик</option>
-                    <option value="hamster">Хомяк</option>
-                    <option value="other">Другое</option>
-                </select>
+                <label for="address">📍 Адрес *</label>
+                <input type="text" id="address" name="address" placeholder="Введите полный адрес" required>
             </div>
 
-            <div class="form-group">
-                <label for="petName">Кличка питомца</label>
-                <input type="text" id="petName" name="petName" placeholder="Кличка вашего питомца">
-            </div>
-
-            <div class="form-group">
-                <label for="petAge">Возраст питомца</label>
-                <input type="text" id="petAge" name="petAge" placeholder="Например: 2 года, 6 месяцев">
-            </div>
-
-            <div class="form-group">
-                <label for="problem">Описание проблемы *</label>
-                <textarea id="problem" name="problem" required placeholder="Опишите симптомы и состояние питомца"></textarea>
-            </div>
-
-            <div class="form-group">
-                <label for="urgency">Срочность</label>
-                <select id="urgency" name="urgency">
-                    <option value="normal">Обычная</option>
-                    <option value="urgent">Срочная</option>
-                    <option value="emergency">Экстренная</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label for="preferredTime">Предпочтительное время</label>
-                <select id="preferredTime" name="preferredTime">
-                    <option value="asap">Как можно скорее</option>
-                    <option value="morning">Утром (9:00-12:00)</option>
-                    <option value="afternoon">Днем (12:00-17:00)</option>
-                    <option value="evening">Вечером (17:00-20:00)</option>
-                </select>
-            </div>
-
-            <div class="form-group">
-                <label for="comments">Дополнительные комментарии</label>
-                <textarea id="comments" name="comments" placeholder="Любая дополнительная информация"></textarea>
-            </div>
-
-            <div class="button-group">
-                <button type="button" id="submitBtn" class="btn btn-primary">
-                    📱 Вызвать врача
-                </button>
-                <button type="button" id="cancelBtn" class="btn btn-secondary">
-                    ❌ Отмена
-                </button>
-            </div>
+            <button type="submit" class="submit-btn">
+                🚑 Вызвать врача
+            </button>
         </form>
 
-        <div class="info-block">
-            <h3>ℹ️ Информация</h3>
-            <ul>
-                <li>Выезд врача: 1500-3000 руб.</li>
-                <li>Время прибытия: 1-2 часа</li>
-                <li>Работаем: 8:00-22:00</li>
-                <li>Экстренные вызовы: круглосуточно</li>
-            </ul>
+        <div id="successMessage" class="success-message">
+            ✅ Заявка успешно отправлена! Врач свяжется с вами в ближайшее время.
+        </div>
+
+        <div id="errorMessage" class="error-message">
+            ❌ Произошла ошибка при отправке заявки. Попробуйте еще раз.
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script>
+        // Маска для телефона
+        document.getElementById('phone').addEventListener('input', function (e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.startsWith('8')) {
+                value = '7' + value.slice(1);
+            }
+            if (value.startsWith('7')) {
+                value = value.slice(1);
+            }
+            
+            let formattedValue = '+7';
+            if (value.length > 0) {
+                formattedValue += ' (' + value.slice(0, 3);
+            }
+            if (value.length >= 4) {
+                formattedValue += ') ' + value.slice(3, 6);
+            }
+            if (value.length >= 7) {
+                formattedValue += '-' + value.slice(6, 8);
+            }
+            if (value.length >= 9) {
+                formattedValue += '-' + value.slice(8, 10);
+            }
+            
+            e.target.value = formattedValue;
+        });
+
+        // Обработка отправки формы
+        document.getElementById('vetForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const name = document.getElementById('name').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            const address = document.getElementById('address').value.trim();
+            
+            // Проверка заполненности полей
+            if (!name || !phone || !address) {
+                showError('Пожалуйста, заполните все обязательные поля');
+                return;
+            }
+            
+            // Проверка телефона
+            const phoneRegex = /^\+7 \(\d{3}\) \d{3}-\d{2}-\d{2}$/;
+            if (!phoneRegex.test(phone)) {
+                showError('Пожалуйста, введите корректный номер телефона');
+                return;
+            }
+            
+            // Отправка данных в формате JSON
+            const requestData = {
+                name: name,
+                phone: phone,
+                address: address
+            };
+            
+            // Блокировка кнопки
+            const submitBtn = document.querySelector('.submit-btn');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = '⏳ Отправка...';
+            submitBtn.disabled = true;
+            
+            fetch('/submit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showSuccess();
+                    document.getElementById('vetForm').reset();
+                } else {
+                    showError(data.message || 'Произошла ошибка при отправке заявки');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showError('Произошла ошибка при отправке заявки');
+            })
+            .finally(() => {
+                // Разблокировка кнопки
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+            });
+        });
+        
+        function showSuccess() {
+            document.getElementById('successMessage').style.display = 'block';
+            document.getElementById('errorMessage').style.display = 'none';
+            setTimeout(() => {
+                document.getElementById('successMessage').style.display = 'none';
+            }, 5000);
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = '❌ ' + message;
+            errorDiv.style.display = 'block';
+            document.getElementById('successMessage').style.display = 'none';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+    </script>
 </body>
 </html>
 
