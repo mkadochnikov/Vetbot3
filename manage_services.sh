@@ -109,7 +109,7 @@ start_services() {
     source "$VENV_PATH/bin/activate"
     
     echo -e "${BLUE}📋 Запуск в фоновом режиме...${NC}"
-    nohup python start_all.py > vet_services.log 2>&1 &
+    nohup python start_with_admin.py > vet_services.log 2>&1 &
     
     echo $! > vet_services.pid
     

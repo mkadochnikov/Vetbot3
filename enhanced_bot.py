@@ -312,9 +312,9 @@ class EnhancedVetBot:
                     DEEPSEEK_API_URL, 
                     headers=headers, 
                     json=data, 
-                    timeout=20
+                    timeout=30
                 ),
-                timeout=25.0
+                timeout=35.0
             )
             
             if response.status_code == 200:
@@ -433,7 +433,14 @@ class EnhancedVetBot:
 
 Звоните НЕМЕДЛЕННО!"""
         
-        await query.edit_message_text(emergency_text)
+        # Создаем кнопку для прямого звонка
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = [
+            [InlineKeyboardButton(f"📞 Позвонить {VET_SERVICE_PHONE}", url=f"tel:{VET_SERVICE_PHONE}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(emergency_text, reply_markup=reply_markup)
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик текстовых сообщений с AI-консультацией"""
@@ -461,7 +468,7 @@ class EnhancedVetBot:
             # Получаем AI-консультацию с таймаутом
             ai_response = await asyncio.wait_for(
                 self.get_ai_consultation(user_message, user_name),
-                timeout=45.0  # 45 секунд таймаут
+                timeout=60.0  # 45 секунд таймаут
             )
             
             # Если активна админская сессия, добавляем уведомление
