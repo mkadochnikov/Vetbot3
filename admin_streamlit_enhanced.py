@@ -1,6 +1,6 @@
 """
 Улучшенная админ-панель на Streamlit для ветеринарного бота
-Версия 3.0 с поддержкой вызовов врача и диалогов
+Версия 3.1 с исправлениями отображения пользователей и диалогов
 """
 import streamlit as st
 import sqlite3
@@ -220,6 +220,31 @@ class VetBotAdmin:
             st.error(f"Ошибка сохранения сообщения: {e}")
             return False
 
+    def format_user_display_name(self, user_row):
+        """Форматировать отображаемое имя пользователя"""
+        # Безопасно получаем значения, обрабатывая None и 'None'
+        username = user_row.get('username', '')
+        first_name = user_row.get('first_name', '')
+        last_name = user_row.get('last_name', '')
+        user_id = user_row.get('user_id', '')
+        
+        # Проверяем username
+        if username and str(username).lower() not in ['none', 'null', '']:
+            return f"@{username}"
+        
+        # Проверяем имя и фамилию
+        name_parts = []
+        if first_name and str(first_name).lower() not in ['none', 'null', '']:
+            name_parts.append(str(first_name))
+        if last_name and str(last_name).lower() not in ['none', 'null', '']:
+            name_parts.append(str(last_name))
+        
+        if name_parts:
+            return " ".join(name_parts)
+        
+        # Если ничего нет, используем ID
+        return f"Пользователь {user_id}"
+
 def main():
     st.set_page_config(
         page_title="Админ-панель ветеринарного бота",
@@ -228,7 +253,7 @@ def main():
     )
     
     # Заголовок
-    st.title("🩺 Админ-панель ветеринарного бота v3.0")
+    st.title("🩺 Админ-панель ветеринарного бота v3.1")
     st.markdown("---")
     
     # Проверка подключения к БД
@@ -297,20 +322,77 @@ def main():
         
         users = admin.get_recent_users(20)
         if not users.empty:
-            st.dataframe(users, use_container_width=True)
+            # Создаем улучшенную таблицу с отформатированными именами
+            display_users = users.copy()
+            display_users['Отображаемое имя'] = display_users.apply(admin.format_user_display_name, axis=1)
+            
+            # Переупорядочиваем колонки для лучшего отображения
+            columns_order = ['user_id', 'Отображаемое имя', 'username', 'first_name', 'last_name', 'created_at']
+            display_users = display_users[columns_order]
+            
+            st.dataframe(display_users, use_container_width=True)
             
             # Выбор пользователя для просмотра диалога
             st.subheader("🔍 Выбрать пользователя для диалога")
-            user_options = {f"{row['username']} ({row['user_id']})": row['user_id'] 
-                          for _, row in users.iterrows() if row['username']}
+            
+            # Создаем опции для всех пользователей
+            user_options = {}
+            for _, row in users.iterrows():
+                display_name = admin.format_user_display_name(row)
+                full_display = f"{display_name} (ID: {row['user_id']})"
+                user_options[full_display] = row['user_id']
             
             if user_options:
                 selected_user = st.selectbox("Выберите пользователя:", list(user_options.keys()))
                 if selected_user:
                     user_id = user_options[selected_user]
-                    if st.button("📖 Открыть диалог"):
-                        st.session_state['selected_user_id'] = user_id
-                        st.session_state['selected_username'] = selected_user
+                    
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        if st.button("📖 Открыть диалог", type="primary"):
+                            st.session_state['selected_user_id'] = user_id
+                            st.session_state['selected_username'] = selected_user
+                            st.success(f"✅ Выбран пользователь: {selected_user}")
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("💬 Быстрое сообщение"):
+                            st.session_state['quick_message_user_id'] = user_id
+                            st.session_state['quick_message_username'] = selected_user
+                            st.rerun()
+            
+            # Быстрое сообщение
+            if 'quick_message_user_id' in st.session_state:
+                st.subheader("⚡ Быстрое сообщение")
+                user_id = st.session_state['quick_message_user_id']
+                username = st.session_state['quick_message_username']
+                
+                st.info(f"Отправка сообщения пользователю: {username}")
+                
+                quick_message = st.text_area("💬 Сообщение:", height=100, 
+                                           placeholder="Введите быстрое сообщение...")
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("📤 Отправить быстрое сообщение", type="primary"):
+                        if quick_message.strip():
+                            admin_name = st.session_state.get('admin_username', 'Консультант')
+                            full_message = f"👨‍💼 **{admin_name}:**\n\n{quick_message}"
+                            
+                            if admin.send_telegram_message(user_id, full_message):
+                                st.success("✅ Сообщение отправлено!")
+                                del st.session_state['quick_message_user_id']
+                                del st.session_state['quick_message_username']
+                                st.rerun()
+                            else:
+                                st.error("❌ Ошибка отправки сообщения")
+                        else:
+                            st.warning("⚠️ Введите текст сообщения")
+                
+                with col2:
+                    if st.button("❌ Отмена"):
+                        del st.session_state['quick_message_user_id']
+                        del st.session_state['quick_message_username']
                         st.rerun()
         else:
             st.info("Пользователи не найдены")
@@ -405,6 +487,8 @@ def main():
                         st.chat_message("assistant").write(f"👨‍💼 **Консультант:** {message['message']}")
                 
                 st.markdown("---")
+            else:
+                st.info("📭 История диалога пуста")
             
             # Форма для отправки сообщения
             st.subheader("✉️ Отправить сообщение пользователю")
@@ -450,15 +534,16 @@ def main():
             users = admin.get_recent_users(10)
             if not users.empty:
                 for _, user in users.iterrows():
-                    if user['username']:
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.write(f"👤 {user['username']} ({user['first_name']} {user['last_name']})")
-                        with col2:
-                            if st.button(f"💬 Диалог", key=f"dialog_{user['user_id']}"):
-                                st.session_state['selected_user_id'] = user['user_id']
-                                st.session_state['selected_username'] = f"{user['username']} ({user['user_id']})"
-                                st.rerun()
+                    display_name = admin.format_user_display_name(user)
+                    
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"👤 {display_name} (ID: {user['user_id']})")
+                    with col2:
+                        if st.button(f"💬 Диалог", key=f"dialog_{user['user_id']}"):
+                            st.session_state['selected_user_id'] = user['user_id']
+                            st.session_state['selected_username'] = f"{display_name} (ID: {user['user_id']})"
+                            st.rerun()
     
     # Информация
     elif page == "ℹ️ Информация":
@@ -468,7 +553,7 @@ def main():
         
         with col1:
             st.subheader("🔧 Версия системы")
-            st.info("**Админ-панель:** v3.0")
+            st.info("**Админ-панель:** v3.1 (исправленная)")
             st.info("**База данных:** SQLite")
             st.info("**Фреймворк:** Streamlit")
             
@@ -478,7 +563,16 @@ def main():
             st.success("✅ Telegram API")
             st.success("✅ Веб-интерфейс")
         
-        st.subheader("🆕 Новые возможности v3.0")
+        st.subheader("🆕 Исправления v3.1")
+        st.markdown("""
+        - 🔧 **Исправлено отображение пользователей без username**
+        - 💬 **Улучшена обработка диалогов с любыми пользователями**
+        - ⚡ **Добавлена функция быстрых сообщений**
+        - 🎯 **Улучшена навигация между разделами**
+        - 🛡️ **Безопасная обработка NULL значений**
+        """)
+        
+        st.subheader("🚀 Возможности v3.0")
         st.markdown("""
         - 🚑 **Просмотр заявок на вызов врача**
         - 💬 **Полная история диалогов с пользователями**
