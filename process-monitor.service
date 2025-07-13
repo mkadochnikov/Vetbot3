@@ -1,0 +1,30 @@
+[Unit]
+Description=Process Monitor Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root
+ExecStart=/root/process_monitor.sh daemon
+ExecStop=/bin/kill -TERM $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Ограничения ресурсов
+MemoryLimit=100M
+CPUQuota=10%
+
+# Настройки безопасности
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/root /var/log /tmp
+
+[Install]
+WantedBy=multi-user.target
+
