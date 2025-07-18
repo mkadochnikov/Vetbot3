@@ -48,7 +48,7 @@ class VetBotAdmin:
             stats['total_calls'] = cursor.fetchone()[0]
             
             # Заявки на вызов врача (новая таблица)
-            cursor = conn.execute("SELECT COUNT(*) FROM vet_requests")
+            cursor = conn.execute("SELECT COUNT(*) FROM vet_calls")
             stats['vet_requests'] = cursor.fetchone()[0]
             
             # Консультации за сегодня
@@ -113,13 +113,13 @@ class VetBotAdmin:
             if not conn:
                 return pd.DataFrame()
             
-            query = """
-            SELECT id, name, phone, address, created_at
-            FROM vet_requests 
+            query = f"""
+            SELECT id, name, phone, address, created_at 
+            FROM vet_calls 
             ORDER BY created_at DESC 
-            LIMIT ?
+            LIMIT {limit}
             """
-            df = pd.read_sql_query(query, conn, params=(limit,))
+            df = pd.read_sql_query(query, conn)
             conn.close()
             return df
             
