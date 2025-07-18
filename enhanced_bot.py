@@ -23,7 +23,11 @@ VERSION = "2.1.0"
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler('./enhanced_bot.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -513,11 +517,12 @@ class EnhancedVetBot:
             except:
                 pass
         except Exception as e:
-            logger.error(f"Error in handle_message: {e}")
+            logger.error(f"Error in handle_message: {e}", exc_info=True)
             try:
                 await processing_msg.edit_text(
                     "❌ Произошла ошибка при обработке запроса. Попробуйте позже или обратитесь к врачу напрямую.\n\n"
-                    f"📞 Телефон: {VET_SERVICE_PHONE}"
+                    f"📞 Телефон: {VET_SERVICE_PHONE}\n\n"
+                    f"🔧 Детали ошибки: {str(e)[:100]}"
                 )
             except:
                 pass
