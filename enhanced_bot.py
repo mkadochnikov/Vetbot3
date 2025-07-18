@@ -13,6 +13,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from dotenv import load_dotenv
+from notification_system import notification_system
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -96,7 +97,70 @@ class VetBotDatabase:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 admin_response TEXT,
                 admin_username TEXT,
+                consultation_status TEXT DEFAULT 'ai', -- ai, waiting_doctor, with_doctor, completed
+                assigned_doctor_id INTEGER,
                 FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        # Таблица врачей
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS doctors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id INTEGER UNIQUE NOT NULL,
+                username TEXT,
+                full_name TEXT NOT NULL,
+                photo_path TEXT,
+                is_approved BOOLEAN DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица активных консультаций
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS active_consultations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                doctor_id INTEGER,
+                consultation_id INTEGER,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'waiting', -- waiting, assigned, active, completed
+                client_username TEXT,
+                client_name TEXT,
+                initial_message TEXT,
+                FOREIGN KEY (consultation_id) REFERENCES consultations (id),
+                FOREIGN KEY (doctor_id) REFERENCES doctors (id)
+            )
+        ''')
+        
+        # Таблица сообщений консультаций
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS consultation_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                consultation_id INTEGER NOT NULL,
+                sender_type TEXT NOT NULL, -- client, doctor, admin, ai
+                sender_id INTEGER,
+                sender_name TEXT,
+                message_text TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                telegram_message_id INTEGER,
+                FOREIGN KEY (consultation_id) REFERENCES active_consultations (id)
+            )
+        ''')
+        
+        # Таблица уведомлений врачам
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS doctor_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                consultation_id INTEGER NOT NULL,
+                doctor_id INTEGER NOT NULL,
+                message_id INTEGER,
+                is_responded BOOLEAN DEFAULT 0,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (consultation_id) REFERENCES active_consultations (id),
+                FOREIGN KEY (doctor_id) REFERENCES doctors (id)
             )
         ''')
         
@@ -242,7 +306,7 @@ class VetBotDatabase:
         return calls
     
     def save_consultation(self, user_id, question, response):
-        """Сохранение консультации в базу данных"""
+        """Сохранение консультации"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -251,8 +315,48 @@ class VetBotDatabase:
             VALUES (?, ?, ?)
         ''', (user_id, question, response))
         
+        consultation_id = cursor.lastrowid
         conn.commit()
         conn.close()
+        return consultation_id
+    
+    def get_active_consultation_by_client(self, client_id):
+        """Получить активную консультацию клиента"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM active_consultations 
+            WHERE client_id = ? AND status IN ('waiting', 'assigned', 'active')
+            ORDER BY started_at DESC LIMIT 1
+        ''', (client_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            columns = ['id', 'client_id', 'doctor_id', 'consultation_id', 'started_at', 
+                      'status', 'client_username', 'client_name', 'initial_message']
+            return dict(zip(columns, result))
+        return None
+    
+    def get_doctor_by_id(self, doctor_id):
+        """Получить информацию о враче по ID"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM doctors WHERE id = ?
+        ''', (doctor_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            columns = ['id', 'telegram_id', 'username', 'full_name', 'photo_path', 
+                      'is_approved', 'is_active', 'registered_at', 'last_activity']
+            return dict(zip(columns, result))
+        return None
 
 class EnhancedVetBot:
     def __init__(self):
@@ -451,6 +555,7 @@ class EnhancedVetBot:
         user_id = update.effective_user.id
         user_message = update.message.text
         user_name = update.effective_user.first_name or "Пользователь"
+        username = update.effective_user.username
         
         # Сначала проверяем и отправляем сообщения от админов
         await self.check_and_send_admin_messages(update, context)
@@ -458,9 +563,38 @@ class EnhancedVetBot:
         # Проверяем, активна ли админская сессия
         active_admin = self.db.is_admin_session_active(user_id)
         
+        # Проверяем, есть ли активная консультация с врачом
+        active_consultation = self.db.get_active_consultation_by_client(user_id)
+        
         # Отправляем сообщение о том, что обрабатываем запрос
         try:
-            if active_admin:
+            if active_consultation and active_consultation['status'] == 'active':
+                # Клиент уже в диалоге с врачом - пересылаем сообщение врачу
+                doctor_info = self.db.get_doctor_by_id(active_consultation['doctor_id'])
+                if doctor_info:
+                    processing_msg = await update.message.reply_text(f"👨‍⚕️ Сообщение передано врачу {doctor_info['full_name']}...")
+                    
+                    # Отправляем сообщение врачу
+                    client_display_name = f"{user_name} (@{username})" if username else user_name
+                    await notification_system.send_message_to_doctor(
+                        doctor_info['telegram_id'], 
+                        user_message, 
+                        from_client=client_display_name
+                    )
+                    
+                    # Сохраняем сообщение в историю консультации
+                    notification_system.add_consultation_message(
+                        active_consultation['id'], 
+                        'client', 
+                        user_id, 
+                        client_display_name, 
+                        user_message
+                    )
+                    
+                    await processing_msg.edit_text("✅ Сообщение передано врачу. Ожидайте ответа.")
+                    return
+                    
+            elif active_admin:
                 processing_msg = await update.message.reply_text(f"👨‍⚕️ Ветеринар {active_admin} анализирует ваш вопрос...")
             else:
                 processing_msg = await update.message.reply_text("🤔 Анализирую ваш вопрос, подождите немного...")
@@ -480,7 +614,23 @@ class EnhancedVetBot:
                 ai_response += f"\n\n👨‍⚕️ К диалогу подключен ветеринар {active_admin}. Вы можете получить дополнительную персональную консультацию!"
             
             # Сохраняем консультацию в базу данных
-            self.db.save_consultation(user_id, user_message, ai_response)
+            consultation_id = self.db.save_consultation(user_id, user_message, ai_response)
+            
+            # Создаем запрос на консультацию с врачом (если нет активной консультации)
+            if not active_consultation and consultation_id:
+                client_display_name = f"{user_name} (@{username})" if username else user_name
+                active_consultation_id = notification_system.create_consultation_request(
+                    user_id, username, client_display_name, user_message
+                )
+                
+                if active_consultation_id:
+                    # Уведомляем врачей о новом клиенте
+                    await notification_system.notify_doctors_about_client(
+                        active_consultation_id, client_display_name, user_message
+                    )
+                    
+                    # Добавляем кнопку для прямого обращения к врачу
+                    ai_response += "\n\n🔔 Врачи уведомлены о вашем вопросе. Если кто-то из врачей будет свободен, он сможет подключиться к диалогу для персональной консультации."
             
             # Удаляем сообщение о обработке
             try:

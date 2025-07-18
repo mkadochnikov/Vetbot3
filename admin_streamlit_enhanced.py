@@ -198,6 +198,116 @@ class VetBotAdmin:
             st.error(f"Ошибка отправки сообщения: {e}")
             return False
     
+    def get_doctors(self):
+        """Получить список всех врачей"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return pd.DataFrame()
+            
+            query = """
+            SELECT id, telegram_id, username, full_name, is_approved, is_active, 
+                   registered_at, last_activity, photo_path
+            FROM doctors 
+            ORDER BY registered_at DESC
+            """
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+            return df
+            
+        except Exception as e:
+            st.error(f"Ошибка получения врачей: {e}")
+            return pd.DataFrame()
+    
+    def update_doctor_approval(self, doctor_id, is_approved):
+        """Обновить статус одобрения врача"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return False
+            
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE doctors 
+                SET is_approved = ? 
+                WHERE id = ?
+            """, (is_approved, doctor_id))
+            
+            conn.commit()
+            conn.close()
+            return cursor.rowcount > 0
+            
+        except Exception as e:
+            st.error(f"Ошибка обновления статуса врача: {e}")
+            return False
+    
+    def update_doctor_activity(self, doctor_id, is_active):
+        """Обновить статус активности врача"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return False
+            
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE doctors 
+                SET is_active = ? 
+                WHERE id = ?
+            """, (is_active, doctor_id))
+            
+            conn.commit()
+            conn.close()
+            return cursor.rowcount > 0
+            
+        except Exception as e:
+            st.error(f"Ошибка обновления активности врача: {e}")
+            return False
+    
+    def get_doctor_consultations(self, doctor_id):
+        """Получить консультации врача"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return pd.DataFrame()
+            
+            query = """
+            SELECT ac.id, ac.client_id, ac.client_name, ac.status, ac.started_at,
+                   COUNT(cm.id) as message_count
+            FROM active_consultations ac
+            LEFT JOIN consultation_messages cm ON ac.id = cm.consultation_id
+            WHERE ac.doctor_id = ?
+            GROUP BY ac.id
+            ORDER BY ac.started_at DESC
+            """
+            df = pd.read_sql_query(query, conn, params=(doctor_id,))
+            conn.close()
+            return df
+            
+        except Exception as e:
+            st.error(f"Ошибка получения консультаций врача: {e}")
+            return pd.DataFrame()
+    
+    def get_consultation_messages(self, consultation_id):
+        """Получить сообщения консультации"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return pd.DataFrame()
+            
+            query = """
+            SELECT sender_type, sender_name, message_text, sent_at
+            FROM consultation_messages
+            WHERE consultation_id = ?
+            ORDER BY sent_at ASC
+            """
+            df = pd.read_sql_query(query, conn, params=(consultation_id,))
+            conn.close()
+            return df
+            
+        except Exception as e:
+            st.error(f"Ошибка получения сообщений консультации: {e}")
+            return pd.DataFrame()
+    
     def save_admin_message(self, user_id, message):
         """Сохранить сообщение админа в БД"""
         try:
@@ -280,7 +390,7 @@ def main():
     st.sidebar.title("📋 Навигация")
     page = st.sidebar.selectbox(
         "Выберите раздел:",
-        ["📊 Статистика", "👥 Пользователи", "💬 Консультации", "🚑 Вызовы врача", "💬 Диалоги", "ℹ️ Информация"]
+        ["📊 Статистика", "👥 Пользователи", "💬 Консультации", "🚑 Вызовы врача", "👨‍⚕️ Врачи", "💬 Диалоги", "ℹ️ Информация"]
     )
     
     # Статистика
@@ -458,6 +568,192 @@ def main():
                 st.caption(f"📅 Дата заявки: {request['created_at']}")
         else:
             st.info("Заявки на вызов врача не найдены")
+    
+    # Врачи
+    elif page == "👨‍⚕️ Врачи":
+        st.header("👨‍⚕️ Управление врачами")
+        
+        doctors = admin.get_doctors()
+        if not doctors.empty:
+            st.subheader("📋 Список врачей")
+            
+            # Фильтры
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                approval_filter = st.selectbox("Статус одобрения:", ["Все", "Одобренные", "Ожидают одобрения"])
+            with col2:
+                activity_filter = st.selectbox("Активность:", ["Все", "Активные", "Неактивные"])
+            with col3:
+                st.write("")  # Пустая колонка для выравнивания
+            
+            # Применяем фильтры
+            filtered_doctors = doctors.copy()
+            if approval_filter == "Одобренные":
+                filtered_doctors = filtered_doctors[filtered_doctors['is_approved'] == 1]
+            elif approval_filter == "Ожидают одобрения":
+                filtered_doctors = filtered_doctors[filtered_doctors['is_approved'] == 0]
+            
+            if activity_filter == "Активные":
+                filtered_doctors = filtered_doctors[filtered_doctors['is_active'] == 1]
+            elif activity_filter == "Неактивные":
+                filtered_doctors = filtered_doctors[filtered_doctors['is_active'] == 0]
+            
+            # Отображаем врачей
+            for _, doctor in filtered_doctors.iterrows():
+                with st.expander(f"👨‍⚕️ {doctor['full_name']} (ID: {doctor['telegram_id']})"):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.write(f"**👤 Имя:** {doctor['full_name']}")
+                        st.write(f"**📧 Username:** @{doctor['username'] or 'не указан'}")
+                        st.write(f"**🆔 Telegram ID:** {doctor['telegram_id']}")
+                    
+                    with col2:
+                        approval_status = "✅ Одобрен" if doctor['is_approved'] else "⏳ Ожидает одобрения"
+                        activity_status = "🟢 Активен" if doctor['is_active'] else "🔴 Неактивен"
+                        st.write(f"**📊 Статус:** {approval_status}")
+                        st.write(f"**🔄 Активность:** {activity_status}")
+                        st.write(f"**📅 Регистрация:** {doctor['registered_at'][:16]}")
+                    
+                    with col3:
+                        # Фотография врача
+                        if doctor['photo_path'] and os.path.exists(doctor['photo_path']):
+                            try:
+                                st.image(doctor['photo_path'], width=150, caption="Фото врача")
+                            except:
+                                st.write("📸 Фото недоступно")
+                        else:
+                            st.write("📸 Фото не загружено")
+                    
+                    # Управление статусами
+                    st.markdown("---")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        if not doctor['is_approved']:
+                            if st.button(f"✅ Одобрить", key=f"approve_{doctor['id']}"):
+                                if admin.update_doctor_approval(doctor['id'], True):
+                                    st.success("Врач одобрен!")
+                                    st.rerun()
+                                else:
+                                    st.error("Ошибка одобрения")
+                        else:
+                            if st.button(f"❌ Отозвать одобрение", key=f"disapprove_{doctor['id']}"):
+                                if admin.update_doctor_approval(doctor['id'], False):
+                                    st.success("Одобрение отозвано!")
+                                    st.rerun()
+                                else:
+                                    st.error("Ошибка отзыва одобрения")
+                    
+                    with col2:
+                        if doctor['is_active']:
+                            if st.button(f"🔴 Деактивировать", key=f"deactivate_{doctor['id']}"):
+                                if admin.update_doctor_activity(doctor['id'], False):
+                                    st.success("Врач деактивирован!")
+                                    st.rerun()
+                                else:
+                                    st.error("Ошибка деактивации")
+                        else:
+                            if st.button(f"🟢 Активировать", key=f"activate_{doctor['id']}"):
+                                if admin.update_doctor_activity(doctor['id'], True):
+                                    st.success("Врач активирован!")
+                                    st.rerun()
+                                else:
+                                    st.error("Ошибка активации")
+                    
+                    with col3:
+                        if st.button(f"📋 Консультации", key=f"consultations_{doctor['id']}"):
+                            st.session_state['selected_doctor_id'] = doctor['id']
+                            st.session_state['selected_doctor_name'] = doctor['full_name']
+                            st.rerun()
+                    
+                    with col4:
+                        if st.button(f"💬 Написать", key=f"message_{doctor['id']}"):
+                            st.session_state['message_doctor_id'] = doctor['telegram_id']
+                            st.session_state['message_doctor_name'] = doctor['full_name']
+                            st.rerun()
+            
+            # Просмотр консультаций врача
+            if 'selected_doctor_id' in st.session_state:
+                st.markdown("---")
+                doctor_id = st.session_state['selected_doctor_id']
+                doctor_name = st.session_state['selected_doctor_name']
+                
+                st.subheader(f"📋 Консультации врача {doctor_name}")
+                
+                consultations = admin.get_doctor_consultations(doctor_id)
+                if not consultations.empty:
+                    st.dataframe(consultations, use_container_width=True)
+                    
+                    # Детальный просмотр консультации
+                    consultation_ids = consultations['id'].tolist()
+                    selected_consultation = st.selectbox("Выберите консультацию для просмотра:", consultation_ids)
+                    
+                    if selected_consultation:
+                        messages = admin.get_consultation_messages(selected_consultation)
+                        if not messages.empty:
+                            st.subheader("💬 Сообщения консультации")
+                            for _, msg in messages.iterrows():
+                                sender_icon = {
+                                    'client': '👤',
+                                    'doctor': '👨‍⚕️',
+                                    'admin': '👨‍💼',
+                                    'ai': '🤖'
+                                }.get(msg['sender_type'], '❓')
+                                
+                                st.chat_message(msg['sender_type']).write(
+                                    f"{sender_icon} **{msg['sender_name']}:** {msg['message_text']}"
+                                )
+                        else:
+                            st.info("Сообщения не найдены")
+                else:
+                    st.info("У врача пока нет консультаций")
+                
+                if st.button("🔙 Назад к списку врачей"):
+                    del st.session_state['selected_doctor_id']
+                    del st.session_state['selected_doctor_name']
+                    st.rerun()
+            
+            # Отправка сообщения врачу
+            if 'message_doctor_id' in st.session_state:
+                st.markdown("---")
+                doctor_telegram_id = st.session_state['message_doctor_id']
+                doctor_name = st.session_state['message_doctor_name']
+                
+                st.subheader(f"💬 Сообщение врачу {doctor_name}")
+                
+                message_text = st.text_area("Текст сообщения:", height=100)
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("📤 Отправить сообщение", type="primary"):
+                        if message_text.strip():
+                            admin_name = st.session_state.get('admin_username', 'Администратор')
+                            full_message = f"👨‍💼 **{admin_name}:**\n\n{message_text}"
+                            
+                            if admin.send_telegram_message(doctor_telegram_id, full_message):
+                                st.success("✅ Сообщение отправлено врачу!")
+                                del st.session_state['message_doctor_id']
+                                del st.session_state['message_doctor_name']
+                                st.rerun()
+                            else:
+                                st.error("❌ Ошибка отправки сообщения")
+                        else:
+                            st.warning("⚠️ Введите текст сообщения")
+                
+                with col2:
+                    if st.button("❌ Отмена"):
+                        del st.session_state['message_doctor_id']
+                        del st.session_state['message_doctor_name']
+                        st.rerun()
+        else:
+            st.info("👨‍⚕️ Врачи не найдены")
+            st.markdown("""
+            **Как добавить врачей:**
+            1. Врачи должны зарегистрироваться через бота для врачей
+            2. После регистрации они появятся в этом разделе
+            3. Администратор может одобрить или отклонить заявки врачей
+            """)
     
     # Диалоги
     elif page == "💬 Диалоги":
