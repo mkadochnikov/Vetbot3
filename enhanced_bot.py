@@ -626,24 +626,15 @@ class EnhancedVetBot:
             except:
                 pass  # Игнорируем ошибки удаления
             
-            # Отправляем ответ с кнопками
-            keyboard = [
-                [InlineKeyboardButton("📱 Вызвать врача на дом", web_app=WebAppInfo(url=WEBAPP_URL))],
-                [InlineKeyboardButton("📞 Экстренная связь", callback_data='emergency_contact')]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
+            # Отправляем ответ без кнопок
             # Разбиваем длинные сообщения
             if len(ai_response) > 4000:
                 # Отправляем по частям
                 parts = [ai_response[i:i+4000] for i in range(0, len(ai_response), 4000)]
-                for i, part in enumerate(parts):
-                    if i == len(parts) - 1:  # Последняя часть с кнопками
-                        await update.message.reply_text(part, reply_markup=reply_markup)
-                    else:
-                        await update.message.reply_text(part)
+                for part in parts:
+                    await update.message.reply_text(part)
             else:
-                await update.message.reply_text(ai_response, reply_markup=reply_markup)
+                await update.message.reply_text(ai_response)
             
         except asyncio.TimeoutError:
             logger.error("AI consultation timeout")
