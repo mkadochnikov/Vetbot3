@@ -354,6 +354,84 @@ class VetBotAdmin:
         
         # Если ничего нет, используем ID
         return f"Пользователь {user_id}"
+    
+    def get_active_consultations(self):
+        """Получить все активные консультации"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return pd.DataFrame()
+            
+            query = """
+            SELECT ac.id, ac.client_id, ac.client_name, ac.doctor_id, 
+                   d.full_name as doctor_name, ac.status, ac.started_at,
+                   COUNT(cm.id) as message_count
+            FROM active_consultations ac
+            LEFT JOIN doctors d ON ac.doctor_id = d.id
+            LEFT JOIN consultation_messages cm ON ac.id = cm.consultation_id
+            WHERE ac.status IN ('active', 'waiting')
+            GROUP BY ac.id
+            ORDER BY ac.started_at DESC
+            """
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+            return df
+            
+        except Exception as e:
+            st.error(f"Ошибка получения активных консультаций: {e}")
+            return pd.DataFrame()
+    
+    def get_available_doctors(self):
+        """Получить список доступных врачей"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return pd.DataFrame()
+            
+            query = """
+            SELECT id, full_name, telegram_id
+            FROM doctors 
+            WHERE is_approved = 1 AND is_active = 1
+            ORDER BY full_name
+            """
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+            return df
+            
+        except Exception as e:
+            st.error(f"Ошибка получения врачей: {e}")
+            return pd.DataFrame()
+    
+    def reassign_doctor(self, consultation_id, new_doctor_id):
+        """Переназначить врача для консультации"""
+        try:
+            conn = self.get_db_connection()
+            if not conn:
+                return False
+            
+            cursor = conn.cursor()
+            
+            # Обновляем консультацию
+            cursor.execute("""
+                UPDATE active_consultations 
+                SET doctor_id = ?, status = 'reassigned'
+                WHERE id = ?
+            """, (new_doctor_id, consultation_id))
+            
+            # Добавляем системное сообщение о переназначении
+            cursor.execute("""
+                INSERT INTO consultation_messages 
+                (consultation_id, sender_type, sender_name, message_text, sent_at)
+                VALUES (?, 'system', 'Администратор', 'Консультация переназначена новому врачу', ?)
+            """, (consultation_id, datetime.now()))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            st.error(f"Ошибка переназначения врача: {e}")
+            return False
 
 def main():
     st.set_page_config(
@@ -757,61 +835,119 @@ def main():
     
     # Диалоги
     elif page == "💬 Диалоги":
-        st.header("💬 Диалоги с пользователями")
+        st.header("💬 Управление консультациями")
         
-        # Проверяем, выбран ли пользователь
-        if 'selected_user_id' in st.session_state:
-            user_id = st.session_state['selected_user_id']
-            username = st.session_state['selected_username']
+        # Вкладки для разных функций
+        tab1, tab2 = st.tabs(["🔄 Активные консультации", "💬 Диалоги с пользователями"])
+        
+        with tab1:
+            st.subheader("🔄 Переназначение врачей")
             
-            st.subheader(f"💬 Диалог с {username}")
+            # Получаем активные консультации
+            active_consultations = admin.get_active_consultations()
             
-            # Получаем диалог
-            dialog = admin.get_user_dialog(user_id)
-            
-            if not dialog.empty:
-                # Отображаем диалог
-                st.subheader("📖 История диалога")
-                for _, message in dialog.iterrows():
-                    if message['type'] == 'consultation':
-                        # Вопрос пользователя
-                        st.chat_message("user").write(f"❓ **Вопрос:** {message['message']}")
-                        if message['response']:
-                            st.chat_message("assistant").write(f"🤖 **AI-ответ:** {message['response']}")
-                    elif message['type'] == 'admin_message':
-                        # Сообщение от админа
-                        st.chat_message("assistant").write(f"👨‍💼 **Консультант:** {message['message']}")
+            if not active_consultations.empty:
+                st.dataframe(active_consultations, use_container_width=True)
                 
+                # Форма переназначения
                 st.markdown("---")
+                st.subheader("👨‍⚕️ Переназначить врача")
+                
+                # Выбор консультации
+                consultation_options = {}
+                for _, row in active_consultations.iterrows():
+                    key = f"ID: {row['id']} - {row['client_name']} → {row['doctor_name']}"
+                    consultation_options[key] = row['id']
+                
+                selected_consultation = st.selectbox(
+                    "Выберите консультацию:",
+                    options=list(consultation_options.keys())
+                )
+                
+                # Выбор нового врача
+                available_doctors = admin.get_available_doctors()
+                if not available_doctors.empty:
+                    doctor_options = {}
+                    for _, row in available_doctors.iterrows():
+                        doctor_options[row['full_name']] = row['id']
+                    
+                    selected_doctor = st.selectbox(
+                        "Выберите нового врача:",
+                        options=list(doctor_options.keys())
+                    )
+                    
+                    col1, col2 = st.columns([1, 4])
+                    with col1:
+                        if st.button("🔄 Переназначить", type="primary"):
+                            consultation_id = consultation_options[selected_consultation]
+                            new_doctor_id = doctor_options[selected_doctor]
+                            
+                            if admin.reassign_doctor(consultation_id, new_doctor_id):
+                                st.success(f"✅ Консультация переназначена врачу {selected_doctor}")
+                                st.rerun()
+                            else:
+                                st.error("❌ Ошибка переназначения")
+                else:
+                    st.warning("⚠️ Нет доступных врачей для переназначения")
             else:
-                st.info("📭 История диалога пуста")
+                st.info("📭 Нет активных консультаций")
+        
+        with tab2:
+            st.subheader("💬 Диалоги с пользователями")
             
-            # Форма для отправки сообщения
-            st.subheader("✉️ Отправить сообщение пользователю")
+            # Проверяем, выбран ли пользователь
+            if 'selected_user_id' in st.session_state:
+                user_id = st.session_state['selected_user_id']
+                username = st.session_state['selected_username']
             
-            # Инициализация имени админа
-            if 'admin_username' not in st.session_state:
-                st.session_state['admin_username'] = 'Консультант'
-            
-            admin_name = st.text_input("👨‍💼 Ваше имя:", st.session_state['admin_username'])
-            st.session_state['admin_username'] = admin_name
-            
-            message_text = st.text_area("💬 Сообщение:", height=100, 
-                                      placeholder="Введите ваше сообщение пользователю...")
-            
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                if st.button("📤 Отправить", type="primary"):
-                    if message_text.strip():
-                        # Добавляем подпись консультанта
-                        full_message = f"👨‍💼 **{admin_name}:**\n\n{message_text}"
-                        
-                        if admin.send_telegram_message(user_id, full_message):
-                            st.success("✅ Сообщение отправлено!")
-                            st.rerun()
+                st.subheader(f"💬 Диалог с {username}")
+                
+                # Получаем диалог
+                dialog = admin.get_user_dialog(user_id)
+                
+                if not dialog.empty:
+                    # Отображаем диалог
+                    st.subheader("📖 История диалога")
+                    for _, message in dialog.iterrows():
+                        if message['type'] == 'consultation':
+                            # Вопрос пользователя
+                            st.chat_message("user").write(f"❓ **Вопрос:** {message['message']}")
+                            if message['response']:
+                                st.chat_message("assistant").write(f"🤖 **AI-ответ:** {message['response']}")
+                        elif message['type'] == 'admin_message':
+                            # Сообщение от админа
+                            st.chat_message("assistant").write(f"👨‍💼 **Консультант:** {message['message']}")
+                    
+                    st.markdown("---")
+                else:
+                    st.info("📭 История диалога пуста")
+                
+                # Форма для отправки сообщения
+                st.subheader("✉️ Отправить сообщение пользователю")
+                
+                # Инициализация имени админа
+                if 'admin_username' not in st.session_state:
+                    st.session_state['admin_username'] = 'Консультант'
+                
+                admin_name = st.text_input("👨‍💼 Ваше имя:", st.session_state['admin_username'])
+                st.session_state['admin_username'] = admin_name
+                
+                message_text = st.text_area("💬 Сообщение:", height=100, 
+                                          placeholder="Введите ваше сообщение пользователю...")
+                
+                col1, col2 = st.columns([1, 4])
+                with col1:
+                    if st.button("📤 Отправить", type="primary"):
+                        if message_text.strip():
+                            # Добавляем подпись консультанта
+                            full_message = f"👨‍💼 **{admin_name}:**\n\n{message_text}"
+                            
+                            if admin.send_telegram_message(user_id, full_message):
+                                st.success("✅ Сообщение отправлено!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Ошибка отправки сообщения")
                         else:
-                            st.error("❌ Ошибка отправки сообщения")
-                    else:
                         st.warning("⚠️ Введите текст сообщения")
             
             with col2:

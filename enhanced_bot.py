@@ -469,23 +469,11 @@ class EnhancedVetBot:
         }
         self.db.save_user(user_data)
         
-        welcome_text = f"""🐱 Добро пожаловать в ветеринарную службу!
+        welcome_text = f"""🐱 Добро пожаловать!
 
-Я помогу вам:
-• Получить AI-консультацию по здоровью кошки
-• Вызвать ветеринара на дом
-
-📱 Версия бота: {VERSION}
-
-Выберите нужную опцию:"""
+Опишите что у вас случилось с котиком, а мы оперативно поможем"""
         
-        keyboard = [
-            [InlineKeyboardButton("🤖 AI Консультация", callback_data='consultation')],
-            [InlineKeyboardButton("📱 Вызвать врача", web_app=WebAppInfo(url=WEBAPP_URL))]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+        await update.message.reply_text(welcome_text)
     
     async def version_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда для показа версии"""
