@@ -948,34 +948,34 @@ def main():
                             else:
                                 st.error("❌ Ошибка отправки сообщения")
                         else:
-                        st.warning("⚠️ Введите текст сообщения")
+                            st.warning("⚠️ Введите текст сообщения")
             
-            with col2:
-                if st.button("🔙 Назад к списку пользователей"):
-                    if 'selected_user_id' in st.session_state:
-                        del st.session_state['selected_user_id']
-                    if 'selected_username' in st.session_state:
-                        del st.session_state['selected_username']
-                    st.rerun()
-        
-        else:
-            st.info("👆 Выберите пользователя в разделе 'Пользователи' для начала диалога")
+                with col2:
+                    if st.button("🔙 Назад к списку пользователей"):
+                        if 'selected_user_id' in st.session_state:
+                            del st.session_state['selected_user_id']
+                        if 'selected_username' in st.session_state:
+                            del st.session_state['selected_username']
+                        st.rerun()
             
-            # Показываем список пользователей для быстрого доступа
-            st.subheader("👥 Быстрый выбор пользователя")
-            users = admin.get_recent_users(10)
-            if not users.empty:
-                for _, user in users.iterrows():
-                    display_name = admin.format_user_display_name(user)
-                    
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.write(f"👤 {display_name} (ID: {user['user_id']})")
-                    with col2:
-                        if st.button(f"💬 Диалог", key=f"dialog_{user['user_id']}"):
-                            st.session_state['selected_user_id'] = user['user_id']
-                            st.session_state['selected_username'] = f"{display_name} (ID: {user['user_id']})"
-                            st.rerun()
+            else:
+                st.info("👆 Выберите пользователя в разделе 'Пользователи' для начала диалога")
+                
+                # Показываем список пользователей для быстрого доступа
+                st.subheader("👥 Быстрый выбор пользователя")
+                users = admin.get_recent_users(10)
+                if not users.empty:
+                    for _, user in users.iterrows():
+                        display_name = admin.format_user_display_name(user)
+                        
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.write(f"👤 {display_name} (ID: {user['user_id']})")
+                        with col2:
+                            if st.button(f"💬 Диалог", key=f"dialog_{user['user_id']}"):
+                                st.session_state['selected_user_id'] = user['user_id']
+                                st.session_state['selected_username'] = f"{display_name} (ID: {user['user_id']})"
+                                st.rerun()
     
     # Информация
     elif page == "ℹ️ Информация":
