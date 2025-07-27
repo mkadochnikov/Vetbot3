@@ -1,0 +1,31 @@
+# Основные зависимости
+python-telegram-bot==22.1
+python-dotenv==1.1.0
+requests==2.31.0
+flask==3.0.0
+flask-cors==4.0.0
+streamlit==1.32.0
+pandas==2.2.0
+
+# База данных
+sqlalchemy==2.0.27
+alembic==1.13.1
+
+# Веб-сервер
+gunicorn==21.2.0
+
+# Утилиты
+pydantic==2.6.1
+loguru==0.7.2
+
+# Тестирование
+pytest==7.4.3
+pytest-cov==4.1.0
+
+# Документация
+sphinx==7.2.6
+
+# Линтеры и форматтеры
+black==24.1.1
+flake8==7.0.0
+isort==5.13.2

@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  vetbot:
+    build: .
+    container_name: vetbot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    ports:
+      - "5000:5000"  # Веб-приложение
+      - "8501:8501"  # Админ-панель
+    networks:
+      - vetbot-network
+
+  # Опционально: отдельный сервис для базы данных (если нужно масштабирование)
+  # db:
+  #   image: postgres:14
+  #   container_name: vetbot-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: vetbot
+  #     POSTGRES_PASSWORD: ${DB_PASSWORD}
+  #     POSTGRES_DB: vetbot
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   networks:
+  #     - vetbot-network
+
+networks:
+  vetbot-network:
+    driver: bridge
+
+# volumes:
+#   postgres-data:
